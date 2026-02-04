@@ -238,8 +238,8 @@ class ElPais(Crawler):
                 "headline": headline,
                 "body": body,
                 "link": link,
-                "fecha": fecha,     # dd-mm-aaaa (solo HOY)
-                "sesgo": "N",
+                "date": fecha,     # dd-mm-aaaa (solo HOY)
+                "bias": "N",
                 "newspaper": self.newspaper,
             })
 

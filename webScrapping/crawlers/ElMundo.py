@@ -223,6 +223,7 @@ class ElMundo(Crawler):
                 "body": body,
                 "link": u,
                 "date": date,
+                "bias": "N",
                 "newspaper": self.newspaper,
             })
 
