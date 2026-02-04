@@ -3,8 +3,9 @@ import json
 import re
 import time
 import uuid
-from urllib.parse import urljoin, urlparse
 import html
+from datetime import datetime, timezone
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -13,52 +14,32 @@ from crawlers.Crawler import Crawler
 
 
 class ElMundo(Crawler):
-    """
-    Scraper para El Mundo usando:
-      - https://www.elmundo.es/espana.html
-      - https://www.elmundo.es/internacional.html
-
-    Filtra opinión (clase ue-c-cover-content--is-opinion y/o URL con /opinion/).
-    Extrae cuerpo preferentemente vía JSON-LD (NewsArticle.articleBody).
-    """
-
-    # URLs de secciones "limpias"
     SECTION_URLS = (
         "https://www.elmundo.es/espana.html",
         "https://www.elmundo.es/internacional.html",
+        "https://www.elmundo.es/economia.html",
     )
 
-    # Patrón típico de noticia:
-    # https://www.elmundo.es/espana/2026/02/04/69825562fdddffa76b8b456d.html
-    # (id hex 24 chars)
-    ARTICLE_RE = re.compile(r"/\d{4}/\d{2}/\d{2}/[0-9a-f]{24}\.html$", re.IGNORECASE)
+    ARTICLE_RE = re.compile(r"/\d{4}/\d{2}/\d{2}/[0-9a-f]{24}\.html$", re.I)
+    DENY = ("/opinion/", "/autor/", "/autores/", "/suscripcion", "/newsletter", "/tags/", "/tag/")
 
     def __init__(self, url: str):
-        # url esperado: "https://www.elmundo.es/"
         super().__init__(url)
         self.newspaper = "ELMUNDO"
-
         self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/121.0 Safari/537.36"
-                ),
-                "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-            }
-        )
+        self.session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/121.0 Safari/537.36"
+            ),
+            "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+        })
 
-    # ---------------------------
-    # Helpers
-    # ---------------------------
     def _soup(self, url: str, timeout: int = 20) -> BeautifulSoup | None:
         try:
             r = self.session.get(url, timeout=timeout)
-            if r.status_code != 200:
-                return None
-            return BeautifulSoup(r.text, "html.parser")
+            return BeautifulSoup(r.text, "html.parser") if r.status_code == 200 else None
         except requests.RequestException:
             return None
 
@@ -71,215 +52,178 @@ class ElMundo(Crawler):
 
         abs_url = urljoin(self.url, href)
         p = urlparse(abs_url)
-
-        # dominio
         if "elmundo.es" not in p.netloc:
             return False
 
         path = p.path.lower()
-
-        # excluir opinión por URL (por si se cuela)
-        if "/opinion/" in path:
-            return False
-
-        # excluir ruido típico
-        deny = ("/autor/", "/autores/", "/suscripcion", "/newsletter", "/tags/", "/tag/")
-        if any(d in path for d in deny):
+        if any(d in path for d in self.DENY):
             return False
 
         return bool(self.ARTICLE_RE.search(path))
 
     @staticmethod
-    def _clean_text(text: str) -> str:
-        # Decodifica entidades HTML: &laquo; -> «, &nbsp; -> espacio, etc.
-        text = html.unescape(text)
-
-        # Normaliza NBSP (a veces queda como \xa0)
-        text = text.replace("\xa0", " ")
-
-        # Limpieza de espacios / saltos
+    def _clean(text: str) -> str:
+        text = html.unescape(text).replace("\xa0", " ")
         text = re.sub(r"\s+\n", "\n", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
         text = re.sub(r"[ \t]{2,}", " ", text)
         return text.strip()
 
-    def _extract_links_from_section(self, soup: BeautifulSoup) -> list[str]:
-        """
-        En las secciones, los items suelen venir en <article class="ue-c-cover-content ...">
-        y el enlace principal es <a class="ue-c-cover-content__link" href="...">.
-
-        Filtramos artículos con clase de opinión.
-        """
-        urls: list[str] = []
-        seen: set[str] = set()
-
+    def _section_links(self, soup: BeautifulSoup) -> list[str]:
+        urls, seen = [], set()
         for art in soup.select("article.ue-c-cover-content"):
-            cls = " ".join(art.get("class", []))
-            if "ue-c-cover-content--is-opinion" in cls:
+            if "ue-c-cover-content--is-opinion" in " ".join(art.get("class", [])):
                 continue
-
-            a = art.select_one("a.ue-c-cover-content__link[href]")
-            if not a:
-                # fallback: link whole content
-                a = art.select_one("a.ue-c-cover-content__link-whole-content[href]")
+            a = art.select_one("a.ue-c-cover-content__link[href]") or art.select_one(
+                "a.ue-c-cover-content__link-whole-content[href]"
+            )
             if not a:
                 continue
-
             href = a.get("href", "").strip()
             if not self._is_article_url(href):
                 continue
-
             u = urljoin(self.url, href)
             if u not in seen:
                 seen.add(u)
                 urls.append(u)
-
         return urls
 
-    def _extract_title(self, soup: BeautifulSoup) -> str:
+    def _title(self, soup: BeautifulSoup) -> str:
         h1 = soup.find("h1")
         if h1:
             t = h1.get_text(" ", strip=True)
             if t:
                 return t
-
         og = soup.find("meta", attrs={"property": "og:title"})
         if og and og.get("content"):
             return og["content"].strip()
-
         t = soup.find("title")
         return t.get_text(strip=True) if t else ""
 
-    def _body_from_jsonld(self, soup: BeautifulSoup) -> str:
-        """
-        Intenta extraer articleBody desde JSON-LD (NewsArticle).
-        Mucho más estable que depender de clases del DOM.
-        """
-        scripts = soup.select('script[type="application/ld+json"]')
-        for s in scripts:
-            raw = s.string
+    def _body(self, soup: BeautifulSoup) -> str:
+        # 1) JSON-LD
+        for s in soup.select('script[type="application/ld+json"]'):
+            raw = (s.string or "").strip()
             if not raw:
                 continue
-            raw = raw.strip()
-            if not raw:
-                continue
-
             try:
                 data = json.loads(raw)
             except Exception:
                 continue
+            objs = data if isinstance(data, list) else [data]
+            for o in list(objs):
+                if isinstance(o, dict) and isinstance(o.get("@graph"), list):
+                    objs.extend([x for x in o["@graph"] if isinstance(x, dict)])
+            for o in objs:
+                if isinstance(o, dict) and (o.get("@type") in ("NewsArticle", "Article", "ReportageNewsArticle")):
+                    b = o.get("articleBody")
+                    if isinstance(b, str) and b.strip():
+                        return self._clean(b)
 
-            # puede venir como dict o lista
-            candidates = data if isinstance(data, list) else [data]
-            for obj in candidates:
-                if not isinstance(obj, dict):
-                    continue
-
-                # a veces viene como @graph
-                if "@graph" in obj and isinstance(obj["@graph"], list):
-                    candidates.extend([x for x in obj["@graph"] if isinstance(x, dict)])
-
-                typ = obj.get("@type") or obj.get("type")
-                if isinstance(typ, list):
-                    typ = typ[0] if typ else None
-
-                if typ in ("NewsArticle", "Article", "ReportageNewsArticle"):
-                    body = obj.get("articleBody")
-                    if isinstance(body, str) and body.strip():
-                        return self._clean_text(body)
-
-        return ""
-
-    def _body_from_dom(self, soup: BeautifulSoup) -> str:
-        """
-        Fallback DOM: intenta selectores frecuentes de El Mundo.
-        """
-        # selectores típicos (pueden cambiar)
-        root = (
-            soup.select_one("div.ue-c-article__body")
-            or soup.select_one("div.ue-c-article__body-content")
-            or soup.select_one("article")
-        )
+        # 2) DOM fallback
+        root = soup.select_one("div.ue-c-article__body") or soup.select_one("article")
         if not root:
             return ""
-
-        # limpia basura
         for tag in root.select("script,style,noscript,header,footer,nav,form,aside,figure,iframe"):
             tag.decompose()
 
-        parts: list[str] = []
+        parts = []
         for node in root.select("h2, h3, p, blockquote"):
             txt = node.get_text(" ", strip=True)
-            if not txt:
+            if txt and len(txt) >= 35:
+                low = txt.lower()
+                if "suscríbete" in low or "hazte suscriptor" in low or "inicia sesión" in low:
+                    continue
+                parts.append(txt)
+
+        return self._clean("\n\n".join(parts))
+
+    def _date_ddmmyyyy_if_today(self, soup: BeautifulSoup) -> str:
+        """
+        Devuelve dd-mm-aaaa si el artículo es de HOY (UTC). Si no, "".
+        Fuente: JSON-LD (dateModified/datePublished) o <time datetime="...">
+        """
+        dt_str = ""
+
+        # JSON-LD
+        for s in soup.select('script[type="application/ld+json"]'):
+            raw = (s.string or "").strip()
+            if not raw:
                 continue
-            low = txt.lower()
-
-            # filtros típicos de paywall/cta
-            if "suscríbete" in low or "hazte suscriptor" in low or "inicia sesión" in low:
+            try:
+                data = json.loads(raw)
+            except Exception:
                 continue
-            if len(txt) < 35:
-                continue
+            objs = data if isinstance(data, list) else [data]
+            for o in list(objs):
+                if isinstance(o, dict) and isinstance(o.get("@graph"), list):
+                    objs.extend([x for x in o["@graph"] if isinstance(x, dict)])
+            for o in objs:
+                if isinstance(o, dict) and (o.get("@type") in ("NewsArticle", "Article", "ReportageNewsArticle")):
+                    dt_str = (o.get("dateModified") or o.get("datePublished") or "").strip()
+                    if dt_str:
+                        break
+            if dt_str:
+                break
 
-            parts.append(txt)
+        # DOM fallback
+        if not dt_str:
+            t = soup.select_one("time[datetime]")
+            dt_str = (t.get("datetime", "").strip() if t else "")
 
-        return self._clean_text("\n\n".join(parts))
+        if not dt_str:
+            return ""
 
-    def _extract_body(self, soup: BeautifulSoup) -> str:
-        body = self._body_from_jsonld(soup)
-        if body and len(body) >= 300:
-            return body
+        # parse ISO
+        if isinstance(dt_str, list):
+            dt_str = dt_str[0] if dt_str else ""
+        try:
+            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        except Exception:
+            return ""
 
-        body = self._body_from_dom(soup)
-        return body
+        if dt.tzinfo is None:
+            # si viniera naive, no nos fiamos para filtrar "hoy"
+            return ""
 
-    # ---------------------------
-    # Main crawl
-    # ---------------------------
-    def crawl(self, max_news: int = 100, sleep_s: float = 0.25) -> list[dict]:
-        # 1) recoger URLs desde secciones
-        urls: list[str] = []
-        seen: set[str] = set()
+        today_utc = datetime.now(timezone.utc).date()
+        dt_utc = dt.astimezone(timezone.utc)
+        return dt_utc.strftime("%d-%m-%Y") if dt_utc.date() == today_utc else ""
 
+    def crawl(self, max_news: int = 300, sleep_s: float = 0.05) -> list[dict]:
+        urls, seen = [], set()
         for sec in self.SECTION_URLS:
             s = self._soup(sec)
             if not s:
                 continue
-            for u in self._extract_links_from_section(s):
+            for u in self._section_links(s):
                 if u not in seen:
                     seen.add(u)
                     urls.append(u)
 
-        if not urls:
-            return []
-
-        urls = urls[:max_news]
-
-        # 2) scrapear artículos
-        out: list[dict] = []
-        for u in urls:
+        out = []
+        for u in urls[:max_news]:
             time.sleep(sleep_s)
             s = self._soup(u)
             if not s:
                 continue
 
-            title = self._extract_title(s)
-            body = self._extract_body(s)
-
-            if not title or not body:
-                continue
-            if len(body) < 300:
-                # evita entradas "vacías" típicas de bloqueos/DOM raro
+            date = self._date_ddmmyyyy_if_today(s)
+            if not date:
                 continue
 
-            out.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "newspaper": self.newspaper,
-                    "date": self.fecha,
-                    "url": u,
-                    "title": title,
-                    "body": body,
-                }
-            )
+            title = self._title(s)
+            body = self._body(s)
+            if not title or not body or len(body) < 300:
+                continue
+
+            out.append({
+                "id": str(uuid.uuid4()),
+                "headline": title,
+                "body": body,
+                "link": u,
+                "date": date,
+                "newspaper": self.newspaper,
+            })
 
         return out
