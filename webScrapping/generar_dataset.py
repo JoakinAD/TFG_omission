@@ -14,8 +14,8 @@ from crawlers.LaRazon import LaRazon
 from crawlers.ElConfidencial import ElConfidencial
 from crawlers.ABC import ABC
 from crawlers.InfoLibre import InfoLibre
-from crawlers.OkDiario import OkDiario
 from crawlers.ElPlural import ElPlural
+from crawlers.ElEspanol import ElEspanol
 
 
 def manage_safety_copies(directory, filename):
@@ -87,10 +87,9 @@ def main(args):
             ElConfidencial("https://www.elconfidencial.com"),
             ABC("https://www.abc.es"),
             InfoLibre("https://www.infolibre.es"),
-            OkDiario("https://okdiario.com"),
-            ElPlural("https://www.elplural.com")
+            ElPlural("https://www.elplural.com"),
+            ElEspanol("https://www.elespanol.com/")
 
-         
         ]
         # realizamos el scrapping
         result_data = []
@@ -125,7 +124,6 @@ def main(args):
             ElConfidencial("https://www.elconfidencial.com"),
             ABC("https://www.abc.es"),
             InfoLibre("https://www.infolibre.es"),
-            OkDiario("https://okdiario.com"),
             ElPlural("https://www.elplural.com")   
         ]
         result_data = []

@@ -1,4 +1,4 @@
-# webScrapping/crawlers/ElPublico.py
+# webScrapping/crawlers/ElEspanol.py
 import json
 import re
 import time
@@ -6,6 +6,7 @@ import uuid
 import html as html_lib
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
+from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup
@@ -13,17 +14,33 @@ from bs4 import BeautifulSoup
 from crawlers.Crawler import Crawler
 
 
-class ElPublico(Crawler):
+class ElEspanol(Crawler):
     SECTION_URLS = (
-        "https://www.publico.es/sociedad",
-        "https://www.publico.es/politica",
-        "https://www.publico.es/internacional",
-        "https://www.publico.es/economia",
+        "https://www.elespanol.com/espana/",
+        "https://www.elespanol.com/mundo/",
+        "https://www.elespanol.com/invertia/",
+        "https://www.elespanol.com/sociedad/",
+    )
+
+    # Links de artículo típicos:
+    # /espana/.../20260205/.../1003744118717_0.html
+    # https://www.elespanol.com/.../20260205/.../100...html
+    ARTICLE_RE = re.compile(r"/\d{8}/[^\"?#]+/\d+_\d+\.html$", re.I)
+
+    # Rutas que queremos evitar (opinion, tribunas, etc.)
+    SKIP_PATH_PARTS = (
+        "/opinion/",
+        "/tribunas/",
+        "/reportajes/",  # si quieres incluir reportajes, quita esto
+        "/podcast/",
+        "/videos/",
+        "/album/",
+        "/galerias/",
     )
 
     def __init__(self, url: str):
         super().__init__(url)
-        self.newspaper = "EL PUBLICO"
+        self.newspaper = "EL ESPAÑOL"
 
         self._session = requests.Session()
         self._session.headers.update(
@@ -34,31 +51,23 @@ class ElPublico(Crawler):
                     "Chrome/121.0 Safari/537.36"
                 ),
                 "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             }
         )
 
     # ---------------------------
-    # HTTP / URL
+    # HTTP / URL helpers
     # ---------------------------
     def _get_soup(self, url: str, timeout: int = 20) -> BeautifulSoup | None:
         try:
-            r = self._session.get(url, timeout=timeout)
+            r = self._session.get(url, timeout=timeout, allow_redirects=True)
             if r.status_code != 200:
                 return None
             return BeautifulSoup(r.text, "html.parser")
         except requests.RequestException:
             return None
 
-    def _is_valid_article_url(self, href: str) -> bool:
-        """
-        Público (según tu HTML):
-          /politica/slug.html
-          /politica/tribunales/slug.html
-        Evitar:
-          /politica (sección)
-          /politica/2 (paginación)
-          /politica/300 (paginación)
-        """
+    def _is_article_url(self, href: str) -> bool:
         if not href:
             return False
         href = href.strip()
@@ -68,53 +77,29 @@ class ElPublico(Crawler):
         abs_url = urljoin(self.url, href)
         p = urlparse(abs_url)
 
-        if "publico.es" not in p.netloc:
+        if "elespanol.com" not in p.netloc:
             return False
 
-        path = p.path.rstrip("/")
-        low = path.lower()
+        path = p.path.lower()
 
-        # descartar secciones base y paginaciones numéricas
-        # (ej: /politica/2)
-        last = low.split("/")[-1]
-        if last.isdigit():
+        if any(x in path for x in self.SKIP_PATH_PARTS):
             return False
 
-        # debe acabar en .html (las noticias del listado lo hacen)
-        if not low.endswith(".html"):
-            return False
-
-        # ruido típico
-        deny = (
-            "/autor/",
-            "/autores/",
-            "/opinion/",
-            "/blogs/",
-            "/tags/",
-            "/tag/",
-            "/video/",
-            "/videos/",
-            "/podcast/",
-            "/podcasts/",
-            "/newsletter",
-            "/suscripcion",
-            "/suscrib",
-        )
-        if any(d in low for d in deny):
-            return False
-
-        return True
+        return bool(self.ARTICLE_RE.search(path))
 
     def _extract_section_links(self, soup: BeautifulSoup) -> list[str]:
         """
-        En tu HTML el link está en: h2.title a.page-link[href]
+        En España / Mundo / Sociedad, suelen estar en:
+          article.art h2.art__title a[href]
+        En Invertia también, pero a veces con href relativo "/invertia/..."
         """
         urls, seen = [], set()
 
-        for a in soup.select("h2.title a.page-link[href], article a.page-link[href]"):
+        for a in soup.select("article.art h2.art__title a[href], article.art a[href]"):
             href = (a.get("href") or "").strip()
-            if not self._is_valid_article_url(href):
+            if not self._is_article_url(href):
                 continue
+
             u = urljoin(self.url, href)
             if u not in seen:
                 seen.add(u)
@@ -123,23 +108,15 @@ class ElPublico(Crawler):
         return urls
 
     # ---------------------------
-    # Text
+    # Text helpers
     # ---------------------------
-    def _clean_text(self, text: str) -> str:
+    @staticmethod
+    def _clean_text(text: str) -> str:
         text = html_lib.unescape(text).replace("\xa0", " ")
         text = re.sub(r"\s+\n", "\n", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
         text = re.sub(r"[ \t]{2,}", " ", text)
         return text.strip()
-
-    def _strip_paywall_cuts(self, text: str) -> str:
-        # por si meten token suelto " ... " o " … " (sin cargarte puntos suspensivos normales)
-        if not text:
-            return text
-        t = re.sub(r"\s+\.\.\.\s+", " ", text)
-        t = re.sub(r"\s+…\s+", " ", t)
-        t = re.sub(r"[ \t]{2,}", " ", t)
-        return t.strip()
 
     def _extract_title(self, soup: BeautifulSoup) -> str:
         h1 = soup.find("h1")
@@ -176,47 +153,51 @@ class ElPublico(Crawler):
                 typ = obj.get("@type") or obj.get("type")
                 if isinstance(typ, list):
                     typ = typ[0] if typ else None
-
                 if typ in ("NewsArticle", "Article", "ReportageNewsArticle"):
                     body = obj.get("articleBody")
                     if isinstance(body, str) and body.strip():
-                        return self._strip_paywall_cuts(self._clean_text(body))
+                        return self._clean_text(body)
 
         return ""
 
     def _body_from_dom(self, soup: BeautifulSoup) -> str:
-        root = (
-            soup.select_one('[itemprop="articleBody"]')
-            or soup.select_one("div.article-body")
-            or soup.select_one("div.content")
-            or soup.find("article")
+        """
+        Fallback DOM: intenta capturar <p> del artículo.
+        Como no tenemos aquí el HTML del artículo completo, lo hacemos defensivo.
+        """
+        container = (
+            soup.select_one("article")
+            or soup.select_one("[itemprop='articleBody']")
+            or soup.select_one(".article")
+            or soup
         )
-        if not root:
+        if not container:
             return ""
 
-        for tag in root.select("script,style,noscript,header,footer,nav,form,aside,figure,iframe"):
+        for tag in container.select(
+            "script,style,noscript,header,footer,nav,form,aside,figure,iframe,.adv,.advertising,.rrss"
+        ):
             tag.decompose()
 
         parts: list[str] = []
-        for node in root.select("h2, h3, p, blockquote, li"):
-            txt = node.get_text(" ", strip=True)
-            if not txt or len(txt) < 35:
+        for p in container.select("p"):
+            txt = p.get_text(" ", strip=True)
+            if not txt:
                 continue
-            low = txt.lower()
-            if "suscríbete" in low or "inicia sesión" in low:
+            if len(txt) < 40:
                 continue
             parts.append(txt)
 
-        return self._strip_paywall_cuts(self._clean_text("\n\n".join(parts)))
+        return self._clean_text("\n\n".join(parts))
 
     def _extract_body(self, soup: BeautifulSoup) -> str:
         body = self._body_from_jsonld(soup)
-        if body and len(body) >= 300:
-            return body
-        return self._body_from_dom(soup)
+        if not body or len(body) < 250:
+            body = self._body_from_dom(soup)
+        return body
 
     # ---------------------------
-    # Date
+    # Date helpers (solo HOY)
     # ---------------------------
     @staticmethod
     def _normalize_dt(dt: str) -> str:
@@ -225,13 +206,19 @@ class ElPublico(Crawler):
             d = datetime.fromisoformat(dt2)
         except ValueError:
             return ""
+
         if d.tzinfo is None:
             return d.isoformat(timespec="seconds")
-        d_utc = d.astimezone(timezone.utc)
-        return d_utc.replace(tzinfo=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
-    def _extract_date_iso(self, soup: BeautifulSoup, link: str) -> str:
-        # 1) JSON-LD (preferido)
+        d_utc = d.astimezone(timezone.utc)
+        return (
+            d_utc.replace(tzinfo=timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+
+    def _extract_date_iso(self, soup: BeautifulSoup) -> str:
+        # 1) JSON-LD
         for s in soup.select('script[type="application/ld+json"]'):
             raw = (s.string or "").strip()
             if not raw:
@@ -252,7 +239,6 @@ class ElPublico(Crawler):
                 typ = obj.get("@type") or obj.get("type")
                 if isinstance(typ, list):
                     typ = typ[0] if typ else None
-
                 if typ in ("NewsArticle", "Article", "ReportageNewsArticle"):
                     dt = obj.get("dateModified") or obj.get("datePublished")
                     if isinstance(dt, str) and dt.strip():
@@ -260,18 +246,25 @@ class ElPublico(Crawler):
                         if iso:
                             return iso
 
-        # 2) DOM
-        t = soup.select_one("time[datetime]")
+        # 2) Meta
+        for prop in ("article:published_time", "article:modified_time"):
+            m = soup.find("meta", attrs={"property": prop})
+            if m and m.get("content"):
+                iso = self._normalize_dt(m["content"])
+                if iso:
+                    return iso
+
+        # 3) <time datetime="YYYY-MM-DD"> (como en tus secciones)
+        t = soup.find("time")
         if t and t.get("datetime"):
-            iso = self._normalize_dt(t["datetime"])
+            # aquí suele venir "2026-02-05"
+            dt = t["datetime"].strip()
+            # normalizamos a ISO Z a medianoche si solo viene fecha
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", dt):
+                return dt + "T00:00:00Z"
+            iso = self._normalize_dt(dt)
             if iso:
                 return iso
-
-        # 3) fallback: por imágenes /uploads/YYYY/MM/DD/... (sale en tu HTML)
-        m = re.search(r"/uploads/(\d{4})/(\d{2})/(\d{2})/", soup.decode())
-        if m:
-            y, mo, d = m.group(1), m.group(2), m.group(3)
-            return f"{y}-{mo}-{d}T00:00:00Z"
 
         return ""
 
@@ -281,7 +274,16 @@ class ElPublico(Crawler):
             d = datetime.fromisoformat(dt_iso.replace("Z", "+00:00"))
         except Exception:
             return False
-        return d.date() == datetime.now(timezone.utc).date()
+
+        madrid = ZoneInfo("Europe/Madrid")
+        today_madrid = datetime.now(madrid).date()
+
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=madrid)
+        else:
+            d = d.astimezone(madrid)
+
+        return d.date() == today_madrid
 
     @staticmethod
     def _iso_to_ddmmyyyy(dt_iso: str) -> str:
@@ -292,10 +294,13 @@ class ElPublico(Crawler):
             return ""
 
     # ---------------------------
-    # Main
+    # Main crawl
     # ---------------------------
-    def crawl(self, max_news: int = 300, sleep_s: float = 0.05) -> list[dict]:
-        urls, seen = [], set()
+    def crawl(self, max_news: int = 250, sleep_s: float = 0.05) -> list[dict]:
+        urls: list[str] = []
+        seen: set[str] = set()
+
+        # 1) recolectar links de portada de secciones
         for sec in self.SECTION_URLS:
             sec_soup = self._get_soup(sec)
             if not sec_soup:
@@ -309,18 +314,20 @@ class ElPublico(Crawler):
             return []
 
         data: list[dict] = []
+
+        # 2) visitar cada noticia y filtrar por HOY (con fecha del artículo, no la sección)
         for link in urls[:max_news]:
             time.sleep(sleep_s)
-            art_soup = self._get_soup(link)
-            if not art_soup:
+            soup = self._get_soup(link)
+            if not soup:
                 continue
 
-            dt_iso = self._extract_date_iso(art_soup, link)
+            dt_iso = self._extract_date_iso(soup)
             if not dt_iso or not self._is_today(dt_iso):
                 continue
 
-            headline = self._extract_title(art_soup)
-            body = self._extract_body(art_soup)
+            headline = self._extract_title(soup)
+            body = self._extract_body(soup)
 
             if not headline or not body or len(body) < 300:
                 continue

@@ -243,7 +243,7 @@ class ElDiario(Crawler):
                 continue
 
             data.append({
-                "id": str(uuid.uuid4()),
+                "id": str(uuid.uuid5(uuid.NAMESPACE_URL, link.strip())),
                 "headline": headline,
                 "body": body,
                 "link": link,

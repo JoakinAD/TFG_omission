@@ -202,9 +202,9 @@ class ElMundo(Crawler):
                     urls.append(u)
 
         out = []
-        for u in urls[:max_news]:
+        for link in urls[:max_news]:
             time.sleep(sleep_s)
-            s = self._soup(u)
+            s = self._soup(link)
             if not s:
                 continue
 
@@ -218,10 +218,10 @@ class ElMundo(Crawler):
                 continue
 
             out.append({
-                "id": str(uuid.uuid4()),
+                "id": str(uuid.uuid5(uuid.NAMESPACE_URL, link.strip())),
                 "headline": title,
                 "body": body,
-                "link": u,
+                "link": link,
                 "date": date,
                 "bias": "N",
                 "newspaper": self.newspaper,
