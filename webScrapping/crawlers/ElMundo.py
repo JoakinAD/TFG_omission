@@ -4,7 +4,7 @@ import re
 import time
 import uuid
 import html
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -21,7 +21,7 @@ class ElMundo(Crawler):
     )
 
     ARTICLE_RE = re.compile(r"/\d{4}/\d{2}/\d{2}/[0-9a-f]{24}\.html$", re.I)
-    DENY = ("/opinion/", "/autor/", "/autores/", "/suscripcion", "/newsletter", "/tags/", "/tag/")
+    DENY = ("/opinion/", "/autor/", "/autores/", "/suscripcion", "/newsletter", "/tags/", "/tag/, #ancla_comentarios")
 
     def __init__(self, url: str):
         super().__init__(url)
@@ -186,8 +186,8 @@ class ElMundo(Crawler):
             # si viniera naive, no nos fiamos para filtrar "hoy"
             return ""
 
-        today_utc = datetime.now(timezone.utc).date()
-        dt_utc = dt.astimezone(timezone.utc)
+        today_utc = datetime.now().date() - timedelta(days = 1)
+        dt_utc = dt.astimezone()
         return dt_utc.strftime("%d-%m-%Y") if dt_utc.date() == today_utc else ""
 
     def crawl(self, max_news: int = 300, sleep_s: float = 0.05) -> list[dict]:

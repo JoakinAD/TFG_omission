@@ -4,7 +4,7 @@ import re
 import time
 import uuid
 import html as html_lib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse
 from zoneinfo import ZoneInfo
 
@@ -313,7 +313,7 @@ class LaRazon(Crawler):
             return False
 
         madrid = ZoneInfo("Europe/Madrid")
-        today_madrid = datetime.now(madrid).date()
+        today_madrid = datetime.now(madrid).date() - timedelta(days = 1)
 
         if d.tzinfo is None:
             d = d.replace(tzinfo=madrid)

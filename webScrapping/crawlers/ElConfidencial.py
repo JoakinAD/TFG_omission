@@ -4,7 +4,7 @@ import re
 import time
 import uuid
 import html as html_lib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -295,7 +295,7 @@ class ElConfidencial(Crawler):
             d = datetime.fromisoformat(dt_iso.replace("Z", "+00:00"))
         except Exception:
             return False
-        return d.date() == datetime.now(timezone.utc).date()
+        return d.date() == datetime.now().date() - timedelta(days = 1)
 
     @staticmethod
     def _iso_to_ddmmyyyy(dt_iso: str) -> str:

@@ -4,7 +4,7 @@ import re
 import time
 import uuid
 import html as html_lib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -160,7 +160,7 @@ class ElDiario(Crawler):
             dt = datetime.fromisoformat(dt_iso.replace("Z", "+00:00"))
         except Exception:
             return False
-        return dt.date() == datetime.now(timezone.utc).date()
+        return dt.date() == datetime.now().date() - timedelta(days = 1)
 
     def _extract_title(self, soup: BeautifulSoup) -> str:
         h1 = soup.find("h1")

@@ -4,7 +4,7 @@ import re
 import time
 import uuid
 import html as html_lib
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -86,7 +86,7 @@ class ElPais(Crawler):
             dt = datetime(int(y), int(mo), int(d)).date()
         except ValueError:
             return ""
-        return f"{d}-{mo}-{y}" if dt == datetime.now().date() else ""
+        return f"{d}-{mo}-{y}" if dt == datetime.now().date() - timedelta(days = 1) else ""
 
     def _section_links_today(self, soup: BeautifulSoup) -> list[tuple[str, str]]:
         """

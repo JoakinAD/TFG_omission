@@ -4,7 +4,7 @@ import re
 import time
 import uuid
 import html as html_lib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse
 from zoneinfo import ZoneInfo
 
@@ -274,16 +274,7 @@ class ElEspanol(Crawler):
             d = datetime.fromisoformat(dt_iso.replace("Z", "+00:00"))
         except Exception:
             return False
-
-        madrid = ZoneInfo("Europe/Madrid")
-        today_madrid = datetime.now(madrid).date()
-
-        if d.tzinfo is None:
-            d = d.replace(tzinfo=madrid)
-        else:
-            d = d.astimezone(madrid)
-
-        return d.date() == today_madrid
+        return d.date() == datetime.now().date() - timedelta(days = 1)
 
     @staticmethod
     def _iso_to_ddmmyyyy(dt_iso: str) -> str:
