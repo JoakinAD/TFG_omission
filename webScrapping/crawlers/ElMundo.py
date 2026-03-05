@@ -186,7 +186,7 @@ class ElMundo(Crawler):
             # si viniera naive, no nos fiamos para filtrar "hoy"
             return ""
 
-        today_utc = datetime.now().date() - timedelta(days = 1)
+        today_utc = datetime.now().date()# - timedelta(days = 1)
         dt_utc = dt.astimezone()
         return dt_utc.strftime("%d-%m-%Y") if dt_utc.date() == today_utc else ""
 

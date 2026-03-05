@@ -160,7 +160,7 @@ class ElDiario(Crawler):
             dt = datetime.fromisoformat(dt_iso.replace("Z", "+00:00"))
         except Exception:
             return False
-        return dt.date() == datetime.now().date() - timedelta(days = 1)
+        return dt.date() == datetime.now().date()# - timedelta(days = 1)
 
     def _extract_title(self, soup: BeautifulSoup) -> str:
         h1 = soup.find("h1")

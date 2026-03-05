@@ -86,7 +86,7 @@ class ElPais(Crawler):
             dt = datetime(int(y), int(mo), int(d)).date()
         except ValueError:
             return ""
-        return f"{d}-{mo}-{y}" if dt == datetime.now().date() - timedelta(days = 1) else ""
+        return f"{d}-{mo}-{y}" if dt == datetime.now().date() else ""# - timedelta(days = 1) else ""
 
     def _section_links_today(self, soup: BeautifulSoup) -> list[tuple[str, str]]:
         """

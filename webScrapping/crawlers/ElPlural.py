@@ -293,7 +293,7 @@ class ElPlural(Crawler):
             return False
 
         madrid = ZoneInfo("Europe/Madrid")
-        today_madrid = datetime.now(madrid).date() - timedelta(days = 1)
+        today_madrid = datetime.now(madrid).date()# - timedelta(days = 1)
 
         if d.tzinfo is None:
             d = d.replace(tzinfo=madrid)
